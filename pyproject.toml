@@ -1,0 +1,18 @@
+[project]
+name = "cooptim"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cvxpy>=1.7.5",
+    "fastexcel>=0.18.0",
+    "numpy>=2.4.0",
+    "pandas>=2.3.3",
+    "polars>=1.36.1",
+    "pyarrow>=22.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
