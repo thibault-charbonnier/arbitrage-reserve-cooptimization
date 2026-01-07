@@ -167,9 +167,10 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     ax_fcr_soc.legend(loc="upper right")
 
     # ---- Panel 2: aFRR UP/DOWN + SoC ----
-    # Use stacked bars for the same market (more readable than side-by-side at long horizons)
-    ax_afrr.bar(x_num, r_down, width=w, label="aFRR DOWN bid (MW)")
-    ax_afrr.bar(x_num, r_up, width=w, bottom=r_down, label="aFRR UP bid (MW)")
+    # Use stacked bars for the same market (more 
+    # readable than side-by-side at long horizons)
+    ax_afrr.bar(x_num, r_down, color='tab:green', width=w, label="aFRR DOWN bid (MW)")
+    ax_afrr.bar(x_num, r_up, color='tab:orange', width=w, bottom=r_down, label="aFRR UP bid (MW)")
     ax_afrr.set_ylabel("aFRR (MW)")
     ax_afrr.grid(True, alpha=0.3)
     ax_afrr.legend(loc="upper left")

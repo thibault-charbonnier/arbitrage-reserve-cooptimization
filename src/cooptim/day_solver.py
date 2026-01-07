@@ -266,11 +266,11 @@ class DaySolver:
 
         # Reserve capacity revenue (assumed €/MW/interval already)
         # If instead your rho_* are €/MW/h, multiply by dt_hours here.
-        rev_reserve = cp.sum(
+        rev_reserve = cp.sum((
             cp.multiply(rho_fcr, r_fcr)
             + cp.multiply(rho_up, r_up)
             + cp.multiply(rho_down, r_down)
-        )
+        ) * dt_hours)
 
         # Throughput penalty discourages simultaneous charge/discharge
         cost_throughput = 0.0
