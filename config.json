@@ -1,6 +1,6 @@
 {
     "battery": {
-        "e_max_mwh": 10,
+        "e_max_mwh": 20,
         "p_ch_max_mw": 10,
         "p_dis_max_mw": 10,
         "eta_ch": 0.90,
@@ -9,8 +9,8 @@
         "soc_max": 0.9
     },
     "run": {
-            "start_date": "2025-01-15",
-            "end_date": "2025-01-15"
+            "start_date": "2025-08-15",
+            "end_date": "2025-08-15"
         },
     "data": {
         "energy_prices_parquet": "data/prices.parquet",
@@ -26,7 +26,7 @@
         "power_headroom": true
     },
     "throughput_penalty": {
-        "c_eur_per_mwh": 10
+        "c_eur_per_mwh": 15
     },
     "end_of_day": {
         "enabled": true,
