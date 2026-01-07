@@ -1,37 +1,50 @@
 {
-  "data": {
-    "energy_prices_parquet": "data/prices.parquet",
-    "reserve_prices_parquet": "data/reserves.parquet",
-    "datetime_column": "Datetime"
-  },
-  "columns": {
-    "energy": "Electricity",
-    "fcr": "FCR",
-    "afrr_up": "aFRR_UP",
-    "afrr_down": "aFRR_DOWN"
-  },
-  "reserve_price_interval_minutes": 15,
-  "battery": {
-    "e_max_mwh": 20.0,
-    "p_ch_max_mw": 10.0,
-    "p_dis_max_mw": 10.0,
-    "eta_ch": 0.95,
-    "eta_dis": 0.95,
-    "soc_min_mwh": 2.0,
-    "soc_max_mwh": 20.0
-  },
-  "activation": {
-    "alpha_up": 0.25,
-    "alpha_down": 0.25
-  },
-  "constraints": {
-    "power_headroom": true,
-    "energy_buffer": { "enabled": true, "tau_hours": 0.25 },
-    "end_of_day": { "enabled": false, "mode": "equal" },
-    "throughput_penalty": { "enabled": true, "c_eur_per_mwh": 0.2 }
-  },
-  "run": {
-    "start_date": "2025-02-01",
-    "end_date": "2025-02-28"
-  }
+    "battery": {
+        "e_max_mwh": 10,
+        "p_ch_max_mw": 4,
+        "p_dis_max_mw": 4,
+        "eta_ch": 0.95,
+        "eta_dis": 0.95,
+        "soc_min": 0.0,
+        "soc_max": 1.0
+    },
+    "run": {
+            "start_date": "2025-05-10",
+            "end_date": "2025-05-11"
+        },
+    "data": {
+        "energy_prices_parquet": "data/prices.parquet",
+        "reserve_prices_parquet": "data/reserves.parquet"
+    },
+    "columns": {
+            "energy": "Electricity",
+            "fcr": "FCR",
+            "afrr_up": "aFRR_UP",
+            "afrr_down": "aFRR_DOWN"
+        },
+    "constraints": {
+        "power_headroom": true
+    },
+    "throughput_penalty": {
+        "c_eur_per_mwh": 0.01
+    },
+    "end_of_day": {
+        "enabled": true,
+        "min_soc_mwh": 5.0
+    },
+    "solver": {
+        "name": "ECOS",
+        "options": {}
+    },
+    "energy_buffer": { 
+        "enabled": true, "tau_hours": 0.25
+     },
+    "fcr": { 
+        "enforce_symmetry": true, "derate": 1.0 
+    },
+    "activation": { 
+        "alpha_up": 0.40, "alpha_down": 0.40, "mode": "block", "reserve_price_interval_minutes": 15
+    },
+    "reserve_penalty": { "c_eur_per_mw": 0.5 }
+
 }

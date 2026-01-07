@@ -15,7 +15,7 @@ class DayInput:
     price_afrr_up: np.ndarray[float]
     price_afrr_down: np.ndarray[float]
 
-    soc0: Optional[float] = 10.0
+    soc0: Optional[float] = 5.0
 
     @classmethod
     def from_df(cls,
@@ -31,8 +31,8 @@ class DayInput:
             DataFrame containing the data for a single day. The index should be Timestamps.
         config : dict
             Configuration dictionary.
-        soc0 : Optional[float], optional, default is 0.5
-            Initial state of charge as a fraction of the battery capacity, by default 0.5.
+        soc0 : Optional[float], optional, default is 5
+            Initial state of charge as a fraction of the battery capacity, by default 5, means 50% SoC.
         """
         return cls(
             index_ts=day_df.index,
