@@ -1,105 +1,191 @@
 # Co-Optimization of Battery Storage Between Energy Arbitrage and Frequency Reserve Markets
 
-Co-optimization framework for Battery Energy Storage Systems between day-ahead energy arbitrage and balancing reserves. Builds a unified optimization model and evaluates revenue/risk using French market data (RTE/Ember).
+This repository implements a **deterministic (perfect-foresight) day-ahead co-optimization** of a Battery Energy Storage System (BESS) between:
+- **Day-Ahead (DA) energy arbitrage**,
+- **FCR** (primary frequency reserve, symmetric),
+- **aFRR** (secondary automatic reserve, **UP** / **DOWN** products).
+
+The goal is to compute, **day by day**, an optimal schedule (SoC, charge/discharge, reserve bids) on a **15-minute grid** while respecting battery and reserve feasibility constraints.  
+
+This work is largely inspired by a reference thesis used throughout the project :
+"Optimizing Residential Battery Energy Storage Systems Across Frequency Regulation Markets and Energy Arbitrage" by **Elias Schuhmacher** and **Eric Rosen** wrote in 2025.
+
+---
+## Main Results :
+
+### Optimized D+1 Schedule
+An example of a day-ahead optimized schedule (January 15, 2021):
+![Optimized D+1 Schedule](images/janv opti.png "Optimized D+1 Schedule")
+
+### Strategies SoC Comparison
+Comparison of three strategies SoC (January 15, 2021):
+![Strategies SoC](images/janvier soc.png "Strategies Comparison")
+
+### Strategies PnLComparison
+Comparison of three strategies PnL (January 15, 2021):
+![Strategies PnL](images/Comparaison_3_Strategies.png "Strategies Comparison")
 
 ---
 
-## Quick Start
+## Problem context
 
-This repository uses **uv** for dependancies, please use the following commands to run the project :
+A BESS can earn:
+    
+- **Energy arbitrage**: charge low, discharge high.
+- **Reserve capacity payments**: get paid for being available to provide frequency control (even if not activated).
+
+Because energy and reserve share the same **power (MW)** and **energy (MWh)** limits, the trade-off is non-trivial: allocating headroom to reserves may reduce arbitrage, and aggressive arbitrage may violate reserve deliverability.
+
+---
+
+## Data 
+
+Two public datasets are used:
+- **French day-ahead prices** (from Ember) originally **hourly**, in €/MWh.
+- **French balancing capacity remuneration** (from RTE Services) **15-min**, in €/MW/15min.
+
+Please find the links to the data below:
+- https://ember-energy.org/data/european-wholesale-electricity-price-data
+- https://www.services-rte.com/fr/telechargez-les-donnees-publiees-par-rte.html?category=market&type=balancing_capacity&subType=procured_reserves
+
+We operate everything on a **UTC 15-minute grid** (96 steps/day). DA hourly prices are expanded to 15-min as piecewise-constant; reserve products are kept for **FCR**, **aFRR_UP**, **aFRR_DOWN**; small gaps are forward-filled. Processed datasets are stored as compact **Parquet** files for fast reproducibility in the repo (data directory).
+
+---
+
+## Battery model
+
+We follow a standard battery model (SoC dynamics + power/energy constraints), grounded in the reference thesis and adapted to an industrial/utility scale.  
+
+Typical parameters used in experiments:
+- **Power**: 10 MW  
+- **Energy**: 20 MWh
+- **SoC bounds**: 10% – 90%  
+- **Efficiencies**: 90% per conversion step  
+- **Degradation proxy**: linear throughput penalty, ~15 €/MWh
+
+---
+
+## Tradable assets
+
+We consider three products settled on the same 15-min grid:
+- **Energy (DA)**: scheduled charging/discharging at price $ \pi_t $ (€/MWh)
+- **FCR capacity**: symmetric reserve, assumed **net SoC impact ~ 0** on average (but consumes power headroom)
+- **aFRR capacity**: UP/DOWN products, modeled with a simplified activation mechanism
+
+---
+
+## Optimization problem
+
+We solve one optimization per day with:
+- $T = 96$ time steps, $\Delta t = 0.25$ hours
+- initial SoC $S_0$ coming from the previous day (optional multi-day linking)
+
+### Decision variables (per interval t)
+- $P_t^{ch} \ge 0$, $P_t^{dis} \ge 0$ : charge/discharge power (MW)
+- $R_t^{fcr} \ge 0$ : FCR capacity (MW)
+- $R_t^{up} \ge 0$, $R_t^{down} \ge 0$ : aFRR UP/DOWN capacity (MW)
+- $A_t^{up} \ge 0$, $A_t^{down} \ge 0$ : aFRR activation power (MW)
+- $S_t$ : state-of-charge (MWh)
+
+### Objective
+
+**Revenues**
+$$
+\text{Revenues}=\sum_{t=1}^{T}\Big[
+\pi_t\,(P_t^{dis}-P_t^{ch})\,\Delta t
++\rho_t^{fcr}R_t^{fcr}
++\rho_t^{up}R_t^{up}
++\rho_t^{down}R_t^{down}
+\Big]
+$$
+
+**Costs (throughput / degradation proxy)**
+$$
+\text{Costs}=\sum_{t=1}^{T} c_{th}\,(P_t^{ch}+P_t^{dis})\,\Delta t
+$$
+
+**Total**
+$$
+\max \ \text{Profit}=\max\big(\text{Revenues}-\text{Costs}\big)
+$$
+
+---
+
+## Key constraints
+
+### 1) SoC dynamics + bounds
+$$
+S_{t+1}=S_t+\eta_{ch}(P_t^{ch}+A_t^{down})\Delta t
+-\frac{1}{\eta_{dis}}(P_t^{dis}+A_t^{up})\Delta t
+$$
+$$
+S_{\min}\le S_t \le S_{\max}\qquad\forall t
+$$
+
+### 2) Power limits + reserve headroom
+
+Directional aFRR consumes headroom in the corresponding direction:
+$$
+P_t^{dis}+R_t^{up}\le P_{\max}^{dis},\qquad
+P_t^{ch}+R_t^{down}\le P_{\max}^{ch}
+$$
+
+For FCR, we enforce symmetric deliverability (headroom in both directions):
+$$
+P_t^{dis}+R_t^{up}+\gamma R_t^{fcr}\le P_{\max}^{dis},\qquad
+P_t^{ch}+R_t^{down}+\gamma R_t^{fcr}\le P_{\max}^{ch}
+$$
+
+### 3) Activation feasibility + activation ratios (aFRR)
+
+Activation cannot exceed capacity:
+$$
+0\le A_t^{up}\le R_t^{up},\qquad 0\le A_t^{down}\le R_t^{down}
+$$
+
+We enforce a uniform activation in time with 25% activation ratios ($\alpha_{up}=0.25$, $\alpha_{down}=0.25$) :
+$$
+\sum_{t=1}^{T}A_t^{up}=\alpha_{up}\sum_{t=1}^{T}R_t^{up},\qquad
+\sum_{t=1}^{T}A_t^{down}=\alpha_{down}\sum_{t=1}^{T}R_t^{down}
+$$
+
+### 4) Energy buffer
+
+Upward reserve requires enough energy above $S_{\min}$, downward reserve requires enough empty space below $S_{\max}$:
+$$
+S_t \ge S_{\min}+(\gamma R_t^{fcr}+R_t^{up})\,\tau,\qquad
+S_t \le S_{\max}-(\gamma R_t^{fcr}+R_t^{down})\,\tau
+$$
+with $\tau$ a deliverability horizon (here 15 minutes).
+
+### 5) Optional multi-day linking
+$ S^{(d+1)}_0=S^{(d)}_T $
+
+---
+
+## Implementation
+
+- **Python + CVXPY** formulation
+- Solved as a **linear program**, using **ECOS** solver
+- Modular, object-oriented structure:
+  - `Battery` stores technical parameters
+  - `DaySolver` solves one day
+  - `DaySolution` stores schedule + metrics + status
+  - `Orchestrator` runs day-by-day and aggregates results
+
+---
+
+## Quickstart
+
+> This repo is `uv`-friendly !
 
 ```bash
-# From the repo root
-
-# Create venv if needed
+# 1) Create venv
 uv venv .venv
+.venv\Scripts\activate
 
-# Activate venv
-source .venv/Scripts/activate
-
-# Synchronize the dependancies
+# 2) Install dependencies
 uv sync
-```
 
----
-
-## Data ingestion & cleaning
-
-This project relies on two public datasets:
-
-- **Day-ahead electricity prices (France)** from **Ember** (hourly time series).
-- **Balancing capacity remuneration** (frequency reserves) from **RTE Services** → _Balancing capacity_ view (quarter-hourly remuneration).
-
-Both sources are converted into compact **Parquet** files with harmonized timestamps and units to make downstream optimization reproducible.
-
----
-
-### 1) Day-ahead electricity prices (energy arbitrage signal)
-
-**Source** Ember – European electricity prices (France), originally provided at an **hourly** resolution.
-Link : https://ember-energy.org/data/european-wholesale-electricity-price-data
-
-**Raw structure**
-
-- Country / zone identifiers
-- Start/end timestamps
-- `Price` in **€/MWh**
-
-**Transformations**
-
-- **Timestamp normalization:** parse timestamps and convert to **UTC**.
-- **Resampling to 15 minutes:** the optimization is run on a 15-min grid to match reserve data.  
-  Hourly day-ahead prices are therefore expanded to 15-min by **forward-fill**:
-  - each hourly price is repeated for its 4 quarter-hours (00:00, 00:15, 00:30, 00:45).
-  - this assumes the day-ahead price is **piecewise constant within the hour** (no interpolation to avoid inventing non-tradable prices).
-
-**Final stored format (`data/prices.parquet`)**
-
-- `Datetime` (**UTC**, 15-min grid)
-- `price_energy` in **€/MWh**
-
----
-
-### 2) Balancing capacity remuneration (frequency reserves)
-
-**Source.** RTE Services – **Balancing capacity** dataset (France).
-Link : https://www.services-rte.com/fr/telechargez-les-donnees-publiees-par-rte.html?category=market&type=balancing_capacity&subType=procured_reserves
-This dataset contains **capacity payments** for being available to provide reserve, not necessarily energy that is actually activated.
-
-**Key interpretation**
-
-- `Price` is expressed in **€/MW/15min**: for a given quarter-hour interval, you are paid this amount per MW of contracted reserve capacity.
-- This is **availability remuneration** (capacity payment). Activation may or may not occur and is not modeled in this project.
-
-**Reserve products kept**
-We focus on the two standard frequency control products:
-
-- **FCR** (_Frequency Containment Reserve_, “primary reserve”): fast, typically symmetric (UP & DOWN).
-- **aFRR** (_automatic Frequency Restoration Reserve_, “secondary reserve”): automatic restoration, usually split into **UP** and **DOWN** products.
-
-**Filtering choices**
-
-- We keep only **`STD`** product types (standard products in the RTE export), which correspond to the standard procurement framework used for **FCR and aFRR**.
-- Long-term / non-standard products (e.g., annual items, `SPE0`) are excluded.
-
-**Direction / “Way”**
-
-- `UP` : ability to **increase net injection** (battery: discharge / reduce charge).
-- `DOWN` : ability to **decrease net injection** or **increase consumption** (battery: charge / reduce discharge).
-- `UP_DOWN` : symmetric capability (ability to provide both directions).
-
-**Timestamp construction**
-The raw file provides a `Date` and an `Heures` interval (e.g., `00:00 - 00:15`).  
-We convert this into a single timestamp:
-
-- `Datetime` = **start of the quarter-hour interval** (e.g., `00:00 - 00:15` → `00:00`)
-- then convert the local timestamp (provided in **UTC+1**) into **UTC**.
-
-So each record at `Datetime = t` represents the remuneration for the **15-min interval starting at t in UTC**.
-
-**Final stored format (`reserves.parquet`).**
-
-- `Datetime` (**UTC**, 15-min grid)
-- `Type` in `{FCR, aFRR}`
-- `Way` in `{UP, DOWN, UP_DOWN}`
-- `price_reserve` in **€/MW/15min**
+# 3) Run
+uv run python main.py
