@@ -5,7 +5,34 @@ import numpy as np
 
 @dataclass(frozen=True)
 class DayInput:
+    """
+    Data class representing the input data for a single day of optimization.
+    Prices input for each product (DA, FCR, aFRR up, aFRR down) are considered as input
+    in the optimization problem. For this project, we used perfect foresight, meaning that
+    the prices are known in advance for the entire day.
+    In practice, one could input forecasted prices, but it's a topic on its own.
 
+    Attributes
+    ----------
+    index_ts : pd.DatetimeIndex
+        Timestamps for each time step in the day.
+    T : int
+        Number of time steps in the day.
+    dt : float
+        Duration of each time step in hours.
+    price_energy : np.ndarray[float]
+        Energy prices for each time step.
+    price_fcr : np.ndarray[float]
+        FCR prices for each time step.
+    price_afrr_up : np.ndarray[float]
+        aFRR up prices for each time step.
+    price_afrr_down : np.ndarray[float]
+        aFRR down prices for each time step.
+    soc0 : Optional[float]
+        Initial state of charge as a fraction of the battery capacity.
+        If selected, the optimization will ensure that the battery ends the day
+        at a given SoC for multi-day optimization.
+    """
     index_ts: pd.DatetimeIndex
     T: int
     dt: float

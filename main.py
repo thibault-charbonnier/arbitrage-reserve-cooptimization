@@ -1,25 +1,18 @@
 import logging
 import json
-import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 from src.cooptim import Orchestrator
 from src.cooptim.solution import plot_global_results
 
-# Configuration du logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
 def run_scenario(name, data_modifier=None, start_date=None, end_date=None):
-    """
-    Exécute un scénario donné avec une configuration potentiellement modifiée par data_modifier.
-    """
     logger.info(f"--- Démarrage du Scénario : {name} ---")
 
     with open("config.json", "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    # OVERRIDE des dates si fournies
     if start_date is not None:
         config["run"]["start_date"] = start_date
     if end_date is not None:
@@ -27,7 +20,6 @@ def run_scenario(name, data_modifier=None, start_date=None, end_date=None):
 
     orchestrator = Orchestrator(config=config)
 
-    # Application du modificateur de données 
     if data_modifier:
         logger.info(f"Application du modificateur de données pour : {name}")
         orchestrator.data = data_modifier(orchestrator.data, config)
@@ -37,8 +29,6 @@ def run_scenario(name, data_modifier=None, start_date=None, end_date=None):
         logger.info(f"--> Scénario {name} terminé. {len(solutions)} jours simulés.")
 
     return solutions
-
-# --- Modificateurs de données ---
 
 def modifier_arbitrage_seul(df, config):
     """
@@ -76,43 +66,29 @@ def modifier_reserve_seul(df, config):
             
     return df_mod
 
-# --- Reporting et PnL ---
-
 def calculate_financials(solutions, config, scenario_name="Scénario"):
     """
     Calcule et affiche un rapport de performance financière sur la période.
-    CORRECTION : Inclut l'activation des réserves dans le calcul du volume déchargé (Cycles).
     """
-    if not solutions:
-        print(f"Pas de solutions pour {scenario_name}")
-        return 0.0
-
     total_rev_energy = 0.0
     total_rev_reserve = 0.0
     total_throughput_mwh = 0.0
-    
-    # Récupération des noms de colonnes prix depuis la config
+
     c_price_e = config["columns"]["energy"]
     c_price_fcr = config["columns"]["fcr"]
     c_price_up = config["columns"]["afrr_up"]
     c_price_down = config["columns"]["afrr_down"]
 
     for s in solutions:
-        # Données horaires (inputs) et résultats (schedule)
         inp = s.input
         sch = s.schedule
-        
-        # Calcul du pas de temps en heures (dt)
-        # On suppose que l'index est régulier
+
         dt_seconds = (inp.index[1] - inp.index[0]).total_seconds()
         dt_hours = dt_seconds / 3600.0
 
         # --- 1. Revenu Energie ---
-        # (Discharge - Charge + Activation_Net) * Prix Spot * dt
-        # On calcule le flux net physique sur le réseau
         net_flow_mw = sch["p_dis_mw"] - sch["p_ch_mw"]
-        
-        # On ajoute l'activation si la colonne existe (Impact financier sur l'énergie)
+
         if "a_act_up_mw" in sch.columns:
              net_flow_mw += (sch["a_act_up_mw"] - sch["a_act_down_mw"])
              
@@ -120,7 +96,6 @@ def calculate_financials(solutions, config, scenario_name="Scénario"):
         total_rev_energy += rev_energy_day
 
         # --- 2. Revenu Réserve ---
-        # Capacité (MW) * Prix (€/MW) * dt (h)
         rev_fcr = (sch["r_fcr_mw"] * inp[c_price_fcr]).sum() * dt_hours
         rev_up = (sch["r_afrr_up_mw"] * inp[c_price_up]).sum() * dt_hours
         rev_down = (sch["r_afrr_down_mw"] * inp[c_price_down]).sum() * dt_hours
@@ -128,24 +103,18 @@ def calculate_financials(solutions, config, scenario_name="Scénario"):
         total_rev_reserve += (rev_fcr + rev_up + rev_down)
 
         # --- 3. Throughput (Volume Déchargé) & Cycles ---
-        # CORRECTION ICI : Pour calculer l'usure, on doit compter TOUT ce qui sort de la batterie.
-        # Soit : Décharge d'Arbitrage (p_dis) + Activation de Réserve à la hausse (act_up)
-        
         act_up = sch["a_act_up_mw"] if "a_act_up_mw" in sch.columns else 0.0
-        
-        # On somme les puissances de décharge et on multiplie par le pas de temps
+
         total_throughput_mwh += ((sch["p_dis_mw"] + act_up) * dt_hours).sum()
 
     total_revenue = total_rev_energy + total_rev_reserve
-    
-    # --- Affichage ---
+
     print(f"\n=== RÉSULTATS FINANCIERS : {scenario_name} ===")
     print(f"Revenu Total       : {total_revenue:,.2f} €")
     print(f"  > Dont Energie   : {total_rev_energy:,.2f} €")
     print(f"  > Dont Réserve   : {total_rev_reserve:,.2f} €")
     print(f"Volume Déchargé    : {total_throughput_mwh:,.2f} MWh")
-    
-    # Estimation des cycles (E_max définie dans la config)
+
     e_max = config["battery"]["e_max_mwh"]
     if e_max > 0:
         cycles = total_throughput_mwh / e_max
@@ -156,8 +125,6 @@ def calculate_financials(solutions, config, scenario_name="Scénario"):
     print("============================================\n")
 
     return total_revenue
-
-# --- Bloc Principal ---
 
 if __name__ == "__main__":
     
@@ -185,7 +152,7 @@ if __name__ == "__main__":
     calculate_financials(sols_res, global_config, "Réserve Seule") # AJOUTÉ
     calculate_financials(sols_coopt, global_config, "Co-optimisation")
 
-# 5. Comparaison Graphique (SoC)
+# 5. Comparaison Graphique
     if sols_arb and sols_coopt and sols_res:
         idx = 0 
         if idx < len(sols_arb) and idx < len(sols_coopt):
@@ -196,26 +163,21 @@ if __name__ == "__main__":
 
             plt.figure(figsize=(12, 6))
 
-            # SoC Arbitrage
             plt.plot(
                 s_arb.schedule.index, s_arb.schedule["soc_mwh"],
                 label="SoC (Arbitrage Seul)", linestyle="--", color="gray", linewidth=1.5
             )
 
-            # SoC Réserve Seule
             plt.plot(
                 s_res.schedule.index, s_res.schedule["soc_mwh"],
                 label="SoC (Réserve Seule)", linestyle="-.", color="green", linewidth=1.5
             )
 
-            # SoC Co-optimisé
             plt.plot(
                 s_coopt.schedule.index, s_coopt.schedule["soc_mwh"],
                 label="SoC (Co-optimisé)", color="tab:blue", linewidth=2.5
             )
-            
-            # --- SUPPRESSION DU BLOC AX2 / FCR ICI ---
-            
+
             plt.title(f"Comparaison Stratégies : Arbitrage vs Réserve vs Co-opti ({day_date})")
             plt.xlabel("Heure (UTC)")
             plt.ylabel("Energie Stockée (MWh)")
@@ -224,7 +186,6 @@ if __name__ == "__main__":
             plt.tight_layout()
             plt.show()
 
-        # Affichage détaillé de la co-optimisation
         logger.info("Affichage des graphiques détaillés pour la Co-optimisation...")
         try:
             plot_global_results(sols_coopt, global_config)

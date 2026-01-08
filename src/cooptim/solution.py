@@ -9,6 +9,22 @@ import matplotlib.dates as mdates
 
 @dataclass()
 class DaySolution:
+    """
+    Represents the solution of the optimization for a single day.
+
+    Attributes
+    ----------
+    date : pd.Timestamp
+        The date of the optimization day.
+    input : pd.DataFrame
+        The input data used for the optimization (prices, etc.).
+    schedule : pd.DataFrame
+        The resulting schedule from the optimization (bids, SoC, etc.).
+    status : str
+        The status of the optimization (e.g., "optimal", "infeasible").
+    solver : str
+        The solver name used for the optimization.
+    """
     date: pd.Timestamp
     input: pd.DataFrame
     schedule: pd.DataFrame
@@ -17,12 +33,16 @@ class DaySolution:
 
     def plot_results(self, config: Optional[Dict[str, str]] = None):
         """
-        Create a 3-panel plot :
-          (1) Reserve bids (bars) + SoC
-          (2) Spot/Day-ahead price
-          (3) Reserve capacity prices
+        Create a multi-panel plot showing:
+            (1) Reserve bids (FCR, aFRR UP/DOWN) and SoC
+            (2) Energy prices over time
+            (3) Reserve capacity prices over time
+
+        Parameters
+        ----------
+        config : Optional[Dict[str, str]]
+            Configuration dictionary containing column names for prices.
         """
-        cols = {}
         inp = self.input.copy()
         sch = self.schedule.copy()
 
@@ -98,10 +118,6 @@ class DaySolution:
         fig.tight_layout()
         fig.show()
 
-
-#################### Ajout Rémi
-
-
 def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     """
     Concatenate all daily solutions and plot the full horizon results.
@@ -111,29 +127,27 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
       (2) aFRR UP/DOWN bids + SoC
       (3) Spot/DA energy price
       (4) Reserve capacity prices (FCR, aFRR UP, aFRR DOWN)
-    """
-    if not solutions:
-        print("No solutions to plot.")
-        return
 
-    # 1) Concat data
+    Parameters
+    ----------
+    solutions : List[DaySolution]
+        List of daily solutions to concatenate and plot.
+    config : Dict[str, Any]
+        Configuration dictionary containing column names for prices.
+    """
+
     full_input = pd.concat([s.input for s in solutions])
     full_schedule = pd.concat([s.schedule for s in solutions])
 
     full_input.sort_index(inplace=True)
     full_schedule.sort_index(inplace=True)
 
-    # 2) Column names from config
     c_price_e = config["columns"]["energy"]
     c_price_fcr = config["columns"]["fcr"]
     c_price_up = config["columns"]["afrr_up"]
     c_price_down = config["columns"]["afrr_down"]
 
-    # 3) Prepare series
     x = full_input.index
-    if len(x) < 2:
-        print("Not enough points to plot.")
-        return
 
     dt_seconds = (x[1] - x[0]).total_seconds()
     width_days = (dt_seconds / 86400.0) * 0.85
@@ -146,7 +160,6 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     x_num = mdates.date2num(x.to_pydatetime())
     w = width_days
 
-    # 4) Plot
     fig, (ax_fcr, ax_afrr, ax_energy, ax_prices) = plt.subplots(
         4, 1, figsize=(12, 12), sharex=True
     )
@@ -155,7 +168,6 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     end_str = x[-1].date()
     fig.suptitle(f"Global Optimization Results: {start_str} to {end_str}", y=0.995)
 
-    # ---- Panel 1: FCR + SoC ----
     ax_fcr.bar(x_num, r_fcr, width=w, label="FCR bid (MW)")
     ax_fcr.set_ylabel("FCR (MW)")
     ax_fcr.grid(True, alpha=0.3)
@@ -166,9 +178,6 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     ax_fcr_soc.set_ylabel("SoC (MWh)")
     ax_fcr_soc.legend(loc="upper right")
 
-    # ---- Panel 2: aFRR UP/DOWN + SoC ----
-    # Use stacked bars for the same market (more 
-    # readable than side-by-side at long horizons)
     ax_afrr.bar(x_num, r_down, color='tab:green', width=w, label="aFRR DOWN bid (MW)")
     ax_afrr.bar(x_num, r_up, color='tab:orange', width=w, bottom=r_down, label="aFRR UP bid (MW)")
     ax_afrr.set_ylabel("aFRR (MW)")
@@ -178,15 +187,12 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     ax_afrr_soc = ax_afrr.twinx()
     ax_afrr_soc.plot(x, soc, "k", linewidth=1.2, label="SoC")
     ax_afrr_soc.set_ylabel("SoC (MWh)")
-    # No legend here to avoid repetition
 
-    # ---- Panel 3: Energy price ----
     ax_energy.plot(x, full_input[c_price_e].to_numpy(dtype=float), label="Spot / DA Price")
     ax_energy.set_ylabel("€/MWh")
     ax_energy.grid(True, alpha=0.3)
     ax_energy.legend(loc="upper left")
 
-    # ---- Panel 4: Reserve prices ----
     ax_prices.plot(x, full_input[c_price_fcr].to_numpy(dtype=float), label="FCR Price")
     ax_prices.plot(x, full_input[c_price_up].to_numpy(dtype=float), label="aFRR UP Price")
     ax_prices.plot(x, full_input[c_price_down].to_numpy(dtype=float), label="aFRR DOWN Price")
@@ -194,7 +200,6 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     ax_prices.grid(True, alpha=0.3)
     ax_prices.legend(loc="upper left")
 
-    # X-axis formatting (smart locator)
     locator = mdates.AutoDateLocator()
     formatter = mdates.ConciseDateFormatter(locator)
     ax_prices.xaxis.set_major_locator(locator)

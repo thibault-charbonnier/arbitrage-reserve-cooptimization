@@ -13,20 +13,89 @@ logger = logging.getLogger(__name__)
 
 class DaySolver:
     """
-    Day-ahead co-optimization for a battery with perfect foresight over one day.
+    Day-ahead co-optimization for a battery (energy + reserves)
 
-    Changes vs your current version (more realistic constraints, still convex):
-      1) Energy buffer (tau) made configurable and properly tied to SoC bounds
-      2) FCR symmetry enforced with dedicated up/down headroom + SoC margin (typical for FCR)
-      3) Activation "average" constraints made dimensionally consistent and optionally applied per block
-      4) Prevent "free" reserve saturation by adding optional small reserve-holding penalty
-         (helps when rho_up is always attractive and you want smoother allocations)
-      5) Make sure any activation/energy links are consistent: a_up/a_down are MW and enter SoC via *dt
+    Optimizes delta-t grid scheduling of a battery over one day (T time steps) with
+    a given forecast of energy and reserve prices. The model selects planned
+    charge/discharge powers, reserve capacities and expected average activations,
+    while respecting energy dynamics, converter power limits, deliverability
+    buffers and operational rules (activation ratios, optional FCR symmetry,
+    end-of-day constraints).
 
-    Notes:
-      - Battery.soc_min/max are ratios, soc is in MWh.
-      - Prices rho_* are assumed already per time step (€/MW/interval). If your data are €/MW/h,
-        you must rescale (see comment in code).
+    All decision variables are per time step t.
+    Some constraints are optional and configurable in the global config
+    as well as most parameters.
+
+    -----------------------------------
+    The optimization is formulated and solved using CVXPY.
+    Find below a summary of the formulated problem with decision variables,
+    constraints and objective function :
+
+    Decision variables (per time step t):
+        - p_ch[t] : scheduled charging power (MW).
+        - p_dis[t]: scheduled discharging power (MW).
+        - r_fcr[t]: FCR capacity offered (MW).
+        - r_up[t] : aFRR up capacity offered (MW).
+        - r_down[t]: aFRR down capacity offered (MW).
+        - a_up[t] : activation in "up" direction (MW).
+        - a_down[t]: activation in "down" direction (MW).
+        - soc[t]  : state-of-charge (MWh), with soc[0] == soc0 and soc[T] constrained at day end.
+
+    Key constraints:
+        1. Energy balance (MWh):
+           soc[t+1] = soc[t] + eta_ch * (p_ch[t] + a_down[t]) * dt_hours
+                                - (1/eta_dis) * (p_dis[t] + a_up[t]) * dt_hours
+
+           Note:
+           - a_down increases stored energy (activation that charges),
+           - a_up decreases stored energy (activation that discharges).
+
+        2. Converter power limits (MW):
+           p_dis[t] + r_up[t] <= p_dis_max
+           p_ch[t] + r_down[t] <= p_ch_max
+
+        3. Activation bounded by reserved capacity:
+           a_up[t] <= r_up[t]
+           a_down[t] <= r_down[t]
+
+        4. FCR symmetry (optional):
+           If `enforce_fcr_symmetry` is true, FCR capacity requires headroom in both
+           directions via f = fcr_derate * r_fcr[t]:
+             p_dis[t] + r_up[t] + f <= p_dis_max
+             p_ch[t] + r_down[t] + f <= p_ch_max
+           Otherwise FCR is added to the respective side in a less strict form.
+
+        5. Energy deliverability buffer (optional):
+           If enabled, the battery must reserve energy margin to be able to deliver
+           reserves over an horizon `tau_hours`:
+             soc[t] >= soc_min + (f + r_up[t]) * tau
+             soc[t] <= soc_max - (f + r_down[t]) * tau
+           with f = fcr_derate * r_fcr[t].
+
+        6. Activation average (ratio) constraints:
+           - Mode `daily` (default):
+               sum(a_up) == alpha_up * sum(r_up)
+               sum(a_down) == alpha_down * sum(r_down)
+           - Mode `block`:
+             The same ratio is enforced per block of length
+             `reserve_price_interval_minutes` (converted to number of steps),
+             preventing all activation in a single step while remaining convex.
+
+        7. End-of-day:
+           - Default ensures soc[T] >= soc0 (do not end lower than start).
+           - If `end_of_day.enabled` is set, can force soc[T] >= configured minimum.
+
+    Objective:
+        Maximize net revenue:
+          Max rev_energy + rev_reserve - cost_throughput - cost_reserve
+
+        - rev_energy: sum_t pi[t] * (p_dis - p_ch + a_up - a_down) * dt_hours
+          (net energy sold).
+        - rev_reserve: sum_t (rho_fcr*r_fcr + rho_up*r_up + rho_down*r_down) * dt_hours
+          (capacity reserve revenues).
+        - cost_throughput: throughput penalty c_throughput_eur_per_mwh * sum((p_ch+p_dis)*dt_hours)
+          to discourage simultaneous charge/discharge.
+        - cost_reserve: small regularizer c_reserve_eur_per_mw * sum(r_fcr + r_up + r_down).
     """
 
     def __init__(self, battery: Battery, config: Dict[str, Any]) -> None:
@@ -37,30 +106,22 @@ class DaySolver:
         self.alpha_up = float(act.get("alpha_up", 0.25))
         self.alpha_down = float(act.get("alpha_down", 0.25))
 
-        # Apply activation ratio constraint either:
-        # - "daily": over the full day (as you do now)
-        # - "block": per reserve price interval block (more realistic, still convex)
-        self.activation_mode = str(act.get("mode", "daily"))  # "daily" or "block"
+        self.activation_mode = str(act.get("mode", "daily"))
         self.reserve_price_interval_minutes = int(act.get("reserve_price_interval_minutes", 15))
 
         tp = (config.get("throughput_penalty", {}) or {})
         self.c_throughput_eur_per_mwh = float(tp.get("c_eur_per_mwh", 0.0))
 
-        # NEW: optional small penalty on holding reserves (avoid always-max bids when prices are positive)
-        # Keep it tiny (e.g. 1e-3 to 1e-2 €/MW/interval) – purely a regularizer.
         rp = (config.get("reserve_penalty", {}) or {})
         self.c_reserve_eur_per_mw = float(rp.get("c_eur_per_mw", 0.0))
 
-        # Energy buffer / deliverability horizon tau (hours)
         eb = (config.get("energy_buffer", {}) or {})
         self.use_energy_buffer = bool(eb.get("enabled", True))
-        self.tau_hours = float(eb.get("tau_hours", 0.25))  # typical 0.25h for 15min deliverability check
+        self.tau_hours = float(eb.get("tau_hours", 0.25))
 
-        # NEW: enforce FCR symmetry explicitly (up and down headroom)
         fcr_cfg = (config.get("fcr", {}) or {})
         self.enforce_fcr_symmetry = bool(fcr_cfg.get("enforce_symmetry", True))
-        # Some operators derate FCR (e.g., only a fraction is assumed deliverable). Optional.
-        self.fcr_derate = float(fcr_cfg.get("derate", 1.0))  # 1.0 = no derating
+        self.fcr_derate = float(fcr_cfg.get("derate", 1.0))
 
         eod = (config.get("end_of_day", {}) or {})
         self.use_end_of_day = bool(eod.get("enabled", False))
@@ -75,6 +136,19 @@ class DaySolver:
         self._prob: Optional[cp.Problem] = None
 
     def solve_day(self, day_input: DayInput) -> DaySolution:
+        """
+        Solve the day-ahead optimization for a given day's input data.
+
+        Parameters
+        ----------
+        day_input : DayInput
+            Input data for the day, including price forecasts and initial SoC.
+
+        Returns
+        -------
+        DaySolution
+            The optimization result, including the schedule and status.
+        """
         T = int(day_input.T)
         dt_hours = float(day_input.dt)
         soc0 = float(day_input.soc0)
@@ -131,10 +205,20 @@ class DaySolver:
         )
 
     def _compile(self, T: int, dt_hours: float) -> None:
+        """
+        Formulate the optimization problem for CVXPY using CVXPY variables and parameters.
+
+        Parameters
+        ----------
+        T : int
+            Number of time steps in the day.
+        dt_hours : float
+            Duration of each time step in hours.
+        """
         b = self.battery
 
         # ================
-        # Variables
+        # Decision Variables
         # ================
         p_ch = cp.Variable(T, nonneg=True)
         p_dis = cp.Variable(T, nonneg=True)
@@ -143,7 +227,6 @@ class DaySolver:
         r_up = cp.Variable(T, nonneg=True)
         r_down = cp.Variable(T, nonneg=True)
 
-        # Model activation as MW (average/expected) – enters energy balance via *dt_hours
         a_up = cp.Variable(T, nonneg=True)
         a_down = cp.Variable(T, nonneg=True)
 
@@ -173,8 +256,8 @@ class DaySolver:
         constraints += [soc >= soc_min_mwh, soc <= soc_max_mwh]
 
         for t in range(T):
+
             # ---- Energy dynamics (MWh) ----
-            # Activation a_down means "extra charging", a_up means "extra discharging"
             constraints += [
                 soc[t + 1] == soc[t]
                 + b.eta_ch * (p_ch[t] + a_down[t]) * dt_hours
@@ -182,8 +265,6 @@ class DaySolver:
             ]
 
             # ---- Headroom for planned dispatch + reserves ----
-            # aFRR is directional and uses the corresponding converter direction.
-            # FCR is symmetric -> needs headroom in BOTH directions (see below).
             constraints += [
                 p_dis[t] + r_up[t] <= b.p_dis_max_mw,
                 p_ch[t] + r_down[t] <= b.p_ch_max_mw,
@@ -195,29 +276,20 @@ class DaySolver:
                 a_down[t] <= r_down[t],
             ]
 
-            # ---- FCR symmetry (more realistic) ----
-            # If you offer r_fcr, you must be able to:
-            #  - increase net injection by r_fcr (up direction)
-            #  - decrease net injection by r_fcr (down direction)
-            # This implies converter headroom BOTH ways.
+            # ---- FCR symmetry---
             if self.enforce_fcr_symmetry:
                 f = self.fcr_derate * r_fcr[t]
                 constraints += [
-                    # Upward response uses discharge capability (reduce charge or increase discharge)
                     p_dis[t] + r_up[t] + f <= b.p_dis_max_mw,
-                    # Downward response uses charge capability (reduce discharge or increase charge)
                     p_ch[t] + r_down[t] + f <= b.p_ch_max_mw,
                 ]
             else:
-                # Fallback (less strict): share headroom with both directions (your previous form)
                 constraints += [
                     p_dis[t] + r_fcr[t] + r_up[t] <= b.p_dis_max_mw,
                     p_ch[t] + r_fcr[t] + r_down[t] <= b.p_ch_max_mw,
                 ]
 
-            # ---- Energy deliverability buffer (critical realism) ----
-            # To offer upward reserves (FCR+UP), you need energy above soc_min.
-            # To offer downward reserves (FCR+DOWN), you need empty space below soc_max.
+            # ---- Energy buffer----
             if self.use_energy_buffer:
                 f = self.fcr_derate * r_fcr[t]
                 constraints += [
@@ -225,17 +297,13 @@ class DaySolver:
                     soc[t] <= soc_max_mwh - (f + r_down[t]) * tau,
                 ]
 
-        # ---- Activation ratio constraints (dimensionally consistent) ----
-        # a_* and r_* are MW. Summing them over T gives "MW-steps". Ratio is fine without dt.
-        # (If you ever switch to defining a_* as MWh, you'd need dt. Here you do not.)
+        # ---- Activation ratio ----
         if self.activation_mode == "daily":
             constraints += [
                 cp.sum(a_up) == self.alpha_up * cp.sum(r_up),
                 cp.sum(a_down) == self.alpha_down * cp.sum(r_down),
             ]
         elif self.activation_mode == "block":
-            # Enforce the average activation ratio over blocks of reserve-price intervals.
-            # This avoids pathological "all activation in one step" while staying convex.
             step_minutes = dt_hours * 60.0
             block_len = int(round(self.reserve_price_interval_minutes / step_minutes))
             block_len = max(block_len, 1)
@@ -264,8 +332,7 @@ class DaySolver:
         # Energy revenue (€/MWh) * (MW) * dt (h)
         rev_energy = cp.sum(cp.multiply(pi, (p_dis - p_ch + a_up - a_down)) * dt_hours)
 
-        # Reserve capacity revenue (assumed €/MW/interval already)
-        # If instead your rho_* are €/MW/h, multiply by dt_hours here.
+        # Reserve capacity revenue.
         rev_reserve = cp.sum((
             cp.multiply(rho_fcr, r_fcr)
             + cp.multiply(rho_up, r_up)
@@ -277,7 +344,7 @@ class DaySolver:
         if self.c_throughput_eur_per_mwh > 0:
             cost_throughput = self.c_throughput_eur_per_mwh * cp.sum((p_ch + p_dis) * dt_hours)
 
-        # Optional reserve-holding penalty (tiny regularizer)
+        # Optional reserve-holding penalty
         cost_reserve = 0.0
         if self.c_reserve_eur_per_mw > 0:
             cost_reserve = self.c_reserve_eur_per_mw * cp.sum(r_fcr + r_up + r_down)
