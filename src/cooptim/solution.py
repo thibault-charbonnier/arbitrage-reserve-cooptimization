@@ -12,18 +12,12 @@ class DaySolution:
     """
     Represents the solution of the optimization for a single day.
 
-    Attributes
-    ----------
-    date : pd.Timestamp
-        The date of the optimization day.
-    input : pd.DataFrame
-        The input data used for the optimization (prices, etc.).
-    schedule : pd.DataFrame
-        The resulting schedule from the optimization (bids, SoC, etc.).
-    status : str
-        The status of the optimization (e.g., "optimal", "infeasible").
-    solver : str
-        The solver name used for the optimization.
+    date : The date of the optimization day.
+    input : The input data used for the optimization 
+    schedule : The resulting schedule from the optimization 
+    status : The status of the optimization 
+    solver : The solver name used for the optimization.
+
     """
     date: pd.Timestamp
     input: pd.DataFrame
@@ -34,14 +28,11 @@ class DaySolution:
     def plot_results(self, config: Optional[Dict[str, str]] = None):
         """
         Create a multi-panel plot showing:
-            (1) Reserve bids (FCR, aFRR UP/DOWN) and SoC
-            (2) Energy prices over time
-            (3) Reserve capacity prices over time
+            Reserve bids (FCR, aFRR UP/DOWN) and SoC
+            Energy prices over time
+            Reserve capacity prices over time
 
-        Parameters
-        ----------
-        config : Optional[Dict[str, str]]
-            Configuration dictionary containing column names for prices.
+        config : Configuration dictionary containing column names for prices.
         """
         inp = self.input.copy()
         sch = self.schedule.copy()
@@ -122,18 +113,8 @@ def plot_global_results(solutions: List[DaySolution], config: Dict[str, Any]):
     """
     Concatenate all daily solutions and plot the full horizon results.
 
-    New layout (more readable):
-      (1) FCR bids + SoC
-      (2) aFRR UP/DOWN bids + SoC
-      (3) Spot/DA energy price
-      (4) Reserve capacity prices (FCR, aFRR UP, aFRR DOWN)
-
-    Parameters
-    ----------
-    solutions : List[DaySolution]
-        List of daily solutions to concatenate and plot.
-    config : Dict[str, Any]
-        Configuration dictionary containing column names for prices.
+    solutions : List of daily solutions to concatenate and plot.
+    config : Configuration dictionary containing column names for prices.
     """
 
     full_input = pd.concat([s.input for s in solutions])

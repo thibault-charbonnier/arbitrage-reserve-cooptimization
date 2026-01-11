@@ -9,8 +9,8 @@
         "soc_max": 0.9
     },
     "run": {
-            "start_date": "2025-08-15",
-            "end_date": "2025-08-15"
+            "start_date": "2025-01-15",
+            "end_date": "2025-01-15"
         },
     "data": {
         "energy_prices_parquet": "data/prices.parquet",
@@ -30,7 +30,7 @@
     },
     "end_of_day": {
         "enabled": true,
-        "min_soc_mwh": 5.0
+        "min_soc_mwh": 10.0
     },
     "solver": {
         "name": "ECOS",

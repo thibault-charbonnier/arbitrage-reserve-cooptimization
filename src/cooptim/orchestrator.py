@@ -28,10 +28,6 @@ class Orchestrator:
         """
         Load energy and reserve price data from parquet files and create a unique dataframe.
 
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame containing joined energy and reserve prices.
         """
         logger.info("Loading data ...")
 
@@ -44,10 +40,6 @@ class Orchestrator:
         """
         Load battery specifications from the configuration dictionary and create a Battery instance.
 
-        Returns
-        -------
-        Battery
-            Instance of the Battery class with specifications from config.
         """
         logger.info("Loading battery ...")
 
@@ -67,10 +59,6 @@ class Orchestrator:
         """
         Main orchestration method to run the co-optimization process.
 
-        Returns
-        -------
-        List[DaySolution]
-            List of DaySolution instances for each day in the specified date range.
         """
         start_date = pd.to_datetime(self.config["run"]["start_date"])
         end_date = pd.to_datetime(self.config["run"]["end_date"])
@@ -92,7 +80,7 @@ class Orchestrator:
                 continue
 
             # By default, start at 50% SoC if no previous day to ensure multi-day continuity
-            soc_init = previous_soc_end if previous_soc_end is not None else 5.0
+            soc_init = previous_soc_end if previous_soc_end is not None else 10.0
 
             day_input = DayInput.from_df(
                 day_df=day_data,
