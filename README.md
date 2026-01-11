@@ -15,15 +15,17 @@ This work is largely inspired by a reference thesis used throughout the project 
 
 ### Optimized D+1 Schedule
 An example of a day-ahead optimized schedule (January 15, 2021):
-![Optimized D+1 Schedule](images/janv_opti.png "Optimized D+1 Schedule")
+![Optimized D+1 Schedule](images/Optim_Schedule.jpeg "Optimized D+1 Schedule")
 
-### Strategies SoC Comparison
-Comparison of three strategies SoC (January 15, 2021):
-![Strategies SoC](images/janvier_soc.png "Strategies Comparison")
+### Strategies PnL Details
+Details of three strategies PnL (January 15, 2021):
+![Strategies Detail](images/tableau_res.png "Strategies Comparison")
 
-### Strategies PnLComparison
-Comparison of three strategies PnL (January 15, 2021):
-![Strategies PnL](images/Comparaison_3_Strategies.png "Strategies Comparison")
+### Strategies daily PnL
+Comparison of three strategies PnL over January:
+![Strategies PnL](images/PnL_days.jpeg "Strategies Comparison")
+
+
 
 ---
 
